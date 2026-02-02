@@ -1,0 +1,96 @@
+{
+    "manual_name": "Network Router Troubleshooting Guide",
+    "version": "2.0",
+    "chapters": [
+        {
+            "title": "Router Won't Power On",
+            "sections": [
+                {
+                    "id": "power-1",
+                    "title": "Checking Power Connections",
+                    "content": "If your router won't power on, first verify the power adapter is properly connected. Check that the power LED on the front panel is illuminated. If not, try a different power outlet. The power adapter should output 12V DC at 2A. Using an incorrect power adapter may damage the router."
+                },
+                {
+                    "id": "power-2",
+                    "title": "Power LED States",
+                    "content": "The power LED indicates router status: Solid green means normal operation. Blinking green indicates the router is starting up. Solid amber means the router is in recovery mode. No light means no power is reaching the device."
+                },
+                {
+                    "id": "power-3",
+                    "title": "Hardware Reset",
+                    "content": "To perform a hardware reset, locate the reset button on the back panel. Press and hold for 10 seconds until all LEDs blink simultaneously. Release the button and wait 2 minutes for the router to restart. This restores factory defaults and clears all custom settings."
+                }
+            ]
+        },
+        {
+            "title": "Internet Connection Issues",
+            "sections": [
+                {
+                    "id": "internet-1",
+                    "title": "No Internet Connection",
+                    "content": "When there is no internet connection, first check the WAN LED status. If the WAN LED is off, verify the ethernet cable from your modem is connected to the WAN port, not a LAN port. The WAN port is typically yellow or labeled 'Internet'. Try a different ethernet cable if available."
+                },
+                {
+                    "id": "internet-2",
+                    "title": "Slow Internet Speed",
+                    "content": "Slow internet can result from several issues. First, run a speed test at speedtest.net to verify actual speeds. If speeds are below your plan, try rebooting the router by unplugging power for 30 seconds. Check for interference from other devices operating on the same WiFi channel. Consider switching from 2.4GHz to 5GHz band for faster speeds over shorter distances."
+                },
+                {
+                    "id": "internet-3",
+                    "title": "Intermittent Connection",
+                    "content": "Intermittent connections often indicate signal interference or hardware issues. Check the router's temperature; overheating can cause disconnections. Ensure proper ventilation and keep the router away from heat sources. Update the router firmware through the admin panel at 192.168.1.1. Consider repositioning the router to a central location."
+                }
+            ]
+        },
+        {
+            "title": "WiFi Configuration",
+            "sections": [
+                {
+                    "id": "wifi-1",
+                    "title": "Changing WiFi Password",
+                    "content": "To change your WiFi password, access the admin panel by typing 192.168.1.1 in your browser. Log in with admin credentials (default: admin/admin). Navigate to Wireless Settings then Security. Enter your new password in the WPA2 passphrase field. Click Save and wait for the router to apply changes. All connected devices will need to reconnect with the new password."
+                },
+                {
+                    "id": "wifi-2",
+                    "title": "Setting Up Guest Network",
+                    "content": "Create a guest network to provide internet access without exposing your main network. In the admin panel, go to Wireless Settings then Guest Network. Enable the guest network and set a unique name (SSID). Choose a password or enable captive portal for temporary access codes. You can limit bandwidth for guest users to prioritize your main network."
+                },
+                {
+                    "id": "wifi-3",
+                    "title": "Optimizing WiFi Channels",
+                    "content": "WiFi channel congestion can reduce speeds. Access the admin panel and navigate to Wireless Settings then Advanced. For 2.4GHz, channels 1, 6, and 11 are non-overlapping and preferred. For 5GHz, use DFS channels for less interference. Enable automatic channel selection or use a WiFi analyzer app to find the least congested channel in your area."
+                }
+            ]
+        },
+        {
+            "title": "Security Settings",
+            "sections": [
+                {
+                    "id": "security-1",
+                    "title": "Firewall Configuration",
+                    "content": "The router includes a built-in firewall that blocks unauthorized incoming connections. Access firewall settings through Security then Firewall in the admin panel. Enable SPI (Stateful Packet Inspection) for enhanced protection. You can configure port forwarding for specific applications while maintaining security. Block ICMP ping requests to make your network less visible to potential attackers."
+                },
+                {
+                    "id": "security-2",
+                    "title": "Parental Controls",
+                    "content": "Set up parental controls to manage internet access for specific devices. In the admin panel, go to Security then Parental Controls. Add devices by their MAC address or hostname. Set access schedules to limit internet time. Block specific websites or content categories. Create different profiles for different family members with varying restrictions."
+                }
+            ]
+        },
+        {
+            "title": "Firmware Updates",
+            "sections": [
+                {
+                    "id": "firmware-1",
+                    "title": "Checking Current Version",
+                    "content": "To check your current firmware version, log into the admin panel at 192.168.1.1. Navigate to System then Status. The firmware version is displayed on the main status page. Compare this with the latest version available on the manufacturer's support website."
+                },
+                {
+                    "id": "firmware-2",
+                    "title": "Performing Firmware Update",
+                    "content": "Before updating firmware, back up your current settings through System then Backup. Download the latest firmware from the manufacturer website. In the admin panel, go to System then Firmware Update. Click Browse and select the downloaded firmware file. Click Update and wait for the process to complete. Do not power off the router during the update. The process takes approximately 5 minutes."
+                }
+            ]
+        }
+    ]
+}
