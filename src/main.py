@@ -1,6 +1,6 @@
 """
 Voice AI Assistant - Main Entry Point
-Interactive REPL for testing the voice AI pipeline with TTS support
+Interactive REPL for testing the voice AI pipeline with TTS support and command handling.
 """
 
 import asyncio
