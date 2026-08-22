@@ -29,7 +29,7 @@ const features = [
       </svg>
     ),
     title: "High-Performance AI",
-    desc: "Powered by Groq's rapid LPU inference and ElevenLabs Turbo TTS."
+    desc: "Powered by advanced neural networks for sub-second text generation and natural voice synthesis."
   },
   {
     icon: (
@@ -53,7 +53,7 @@ export default function LandingPage() {
         <Logo />
         <div className="nav-actions">
           <a
-            href="https://github.com/Praveen-pandey-ai/Voice-AI"
+            href="https://github.com/praveenpandey-ai-researcher/NetWise-AI-"
             target="_blank"
             rel="noopener noreferrer"
             className="btn-github"
@@ -76,13 +76,13 @@ export default function LandingPage() {
         </div>
 
         <h1 className="hero-title">
-          Your Networking Manuals,<br />
-          Now a <span className="accent">Conversation.</span>
+          Talk to Your <br />
+          <span className="accent">Network</span> Data.
         </h1>
 
         <p className="hero-subtitle">
-          Ask anything from networking manuals.<br />
-          Get instant, accurate answers with Voice AI + RAG.
+          An ultra-low latency Voice AI powered by Hybrid RAG.<br />
+          Get instant answers from complex networking manuals.
         </p>
 
         <div className="hero-actions">
