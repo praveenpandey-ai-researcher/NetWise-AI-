@@ -106,7 +106,7 @@ export default function LandingPage() {
       </section>
 
       <section className="landing-features">
-        <p className="features-title">Built for Network Engineers</p>
+        <p className="features-title">Features</p>
         <div className="features-grid">
           {features.map((f, i) => (
             <div className="feature-card" key={i}>
