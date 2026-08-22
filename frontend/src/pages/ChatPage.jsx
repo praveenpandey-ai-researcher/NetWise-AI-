@@ -33,7 +33,8 @@ export default function ChatPage() {
   const connectWebSocket = () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
 
-    const ws = new WebSocket('ws://localhost:8000/ws/chat')
+    const wsUrl = 'wss://netwise-ai.onrender.com/ws/chat';
+    const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
     ws.onopen = () => {
