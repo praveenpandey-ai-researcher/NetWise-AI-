@@ -10,6 +10,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Ensure stdout uses UTF-8 encoding to avoid UnicodeEncodeError in Windows cmd
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 from src.config import config, validate_config, print_config_errors
 from src.pipeline.orchestrator import get_orchestrator
 from src.voice.tts_integration import text_to_speech
@@ -79,7 +83,7 @@ async def voice_conversation():
     print("📢 Say 'goodbye' or 'exit' to quit")
     print("─" * 50)
     
-    # Speak a greeting
+    # Speak a greeting (blocking so it finishes before listening)
     await speak_text("Hello! I'm your voice assistant. How can I help you today?", audio_player)
     
     # Main conversation loop
@@ -90,6 +94,17 @@ async def voice_conversation():
             
             if not text:
                 continue
+            
+            if audio_player.is_playing:
+                # Check for barge-in interruption words
+                interrupt_words = ["stop", "wait", "hold on", "shh", "quiet", "hey", "shut up"]
+                if any(word in text.lower() for word in interrupt_words) or len(text.split()) > 4:
+                    print(f"\n🛑 User interrupted! (Heard: '{text}') Stopping playback...")
+                    audio_player.stop()
+                    continue
+                else:
+                    print(f"\n🔇 Ignoring noise during playback: '{text}'")
+                    continue
             
             print(f"\n🎤 You said: \"{text}\"")
             print(f"   (ASR: {asr_latency:.0f}ms)")
@@ -113,8 +128,16 @@ async def voice_conversation():
             print(f"\n🤖 Response: {response[:100]}...")
             print(f"   ⏱️ TTFB: {result['metrics']['ttfb_ms']:.0f}ms | Total: {result['metrics']['total_ms']:.0f}ms")
             
-            # Speak the response
-            await speak_text(response, audio_player)
+            # Stop any existing playback
+            audio_player.stop()
+            
+            # Speak the response in the background (Barge-in support)
+            async def background_play():
+                await speak_text(response, audio_player)
+            asyncio.create_task(background_play())
+            
+            # Briefly sleep so the TTS can start before the mic turns back on
+            await asyncio.sleep(0.5)
             
         except KeyboardInterrupt:
             print("\n\n👋 Interrupted!")

@@ -15,8 +15,10 @@ load_dotenv()
 class GroqConfig(BaseModel):
     """Groq LLM configuration"""
     api_key: str = os.getenv("GROQ_API_KEY", "")
-    model: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    max_tokens: int = 1024
+    # openai/gpt-oss-20b: smallest/fastest model available on this account
+    # openai/gpt-oss-120b: slower but higher quality — set GROQ_MODEL in .env to switch
+    model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+    max_tokens: int = 300  # Voice responses should be short — saves ~1s on generation
     temperature: float = 0.7
 
 
@@ -24,14 +26,15 @@ class ElevenLabsConfig(BaseModel):
     """ElevenLabs TTS configuration"""
     api_key: str = os.getenv("ELEVENLABS_API_KEY", "")
     voice_id: str = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
-    model: str = "eleven_multilingual_v2"
+    # eleven_flash_v2_5: ~75ms TTFB vs 1.7s for eleven_multilingual_v2
+    model: str = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
 
 
 class RAGConfig(BaseModel):
     """RAG pipeline configuration"""
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "512"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "50"))
-    top_k: int = int(os.getenv("TOP_K", "10"))
+    top_k: int = int(os.getenv("TOP_K", "5"))  # Reduced from 10 → less context = faster LLM
     rerank_top_k: int = int(os.getenv("RERANK_TOP_K", "3"))
     prefetch_debounce_ms: int = 150
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")

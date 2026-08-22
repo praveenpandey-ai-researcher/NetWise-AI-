@@ -82,15 +82,21 @@ Return only the JSON array of relevance scores:""")
             "passages": passages_text
         })
         
-        # Parse scores from response
+        # Parse scores from response — handle markdown blocks and extra text
         import re
-        scores_match = re.search(r'\[[\d,\s.]+\]', response)
+        # Strip markdown code fences if present
+        clean = re.sub(r'```[\w]*\n?', '', response).strip()
+        # Try to find a JSON array of numbers (int or float)
+        scores_match = re.search(r'\[\s*[\d.,\s]+\s*\]', clean)
         
         if not scores_match:
-            print("⚠️ Failed to parse reranker scores, using original order")
-            return documents[:top_k], (time.time() - start_time) * 1000
+            # Fallback to fast heuristic reranking silently
+            return heuristic_rerank(query, documents, top_k), (time.time() - start_time) * 1000
         
         scores = json.loads(scores_match.group(0))
+        
+        if len(scores) != len(documents):
+            return heuristic_rerank(query, documents, top_k), (time.time() - start_time) * 1000
         
         # Pair documents with scores and sort
         scored_docs = list(zip(documents, scores))
@@ -102,8 +108,7 @@ Return only the JSON array of relevance scores:""")
         return reranked, (time.time() - start_time) * 1000
         
     except Exception as e:
-        print(f"⚠️ Reranking failed: {e}")
-        return documents[:top_k], (time.time() - start_time) * 1000
+        return heuristic_rerank(query, documents, top_k), (time.time() - start_time) * 1000
 
 
 def heuristic_rerank(

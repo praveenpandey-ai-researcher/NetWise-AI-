@@ -10,6 +10,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Ensure stdout uses UTF-8 encoding to avoid UnicodeEncodeError in Windows cmd
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 from src.config import config, validate_config, print_config_errors
 from src.pipeline.orchestrator import get_orchestrator
 
