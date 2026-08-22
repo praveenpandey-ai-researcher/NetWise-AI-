@@ -120,9 +120,6 @@ export default function LandingPage() {
 
 
 
-      <footer className="landing-footer">
-        © 2024 NetWise AI. All rights reserved.
-      </footer>
     </div>
   )
 }
