@@ -43,12 +43,14 @@ class FakeSpeechRecognition {
     this.started = false
     this.onend && this.onend()
   }
-  emitFinal(text) {
+  emitFinal(text) { this.emit(text, true) }
+  emitInterim(text) { this.emit(text, false) }
+  emit(text, isFinal) {
     this.onresult && this.onresult({
       resultIndex: 0,
       results: Object.assign([], {
         length: 1,
-        0: Object.assign([{ transcript: text }], { isFinal: true, length: 1 }),
+        0: Object.assign([{ transcript: text }], { isFinal, length: 1 }),
       }),
     })
   }
@@ -186,6 +188,44 @@ describe('voice loop', () => {
     await flush(95000)
     expect(screen.getByText(/didn't respond in time/i)).toBeTruthy()
     expect(recognizer.started).toBe(true)
+  })
+
+  it('shows the live transcript while you are still speaking', async () => {
+    renderChat(); await flush(700)
+
+    await act(async () => { recognizer.emitInterim('how do i reset') })
+    await flush(20)
+    expect(screen.getByText('how do i reset')).toBeTruthy()
+    // Nothing is submitted until the phrase is final.
+    expect(socket.sent).toHaveLength(0)
+
+    await act(async () => { recognizer.emitFinal('how do i reset my router') })
+    await flush(50)
+
+    // The provisional line is replaced by the committed question.
+    expect(screen.queryByText('how do i reset')).toBeNull()
+    expect(screen.getByText('how do i reset my router')).toBeTruthy()
+    expect(socket.sent.at(-1)).toEqual({ query: 'how do i reset my router' })
+  })
+
+  it('keeps the whole conversation instead of wiping it each turn', async () => {
+    renderChat(); await flush(700)
+
+    await act(async () => { recognizer.emitFinal('what is dhcp') })
+    await flush(50)
+    await act(async () => { socket.reply({ type: 'response_generated', response: 'DHCP hands out addresses.' }) })
+    await flush(2000)
+
+    await act(async () => { recognizer.emitFinal('what is dns') })
+    await flush(50)
+    await act(async () => { socket.reply({ type: 'response_generated', response: 'DNS resolves names.' }) })
+    await flush(2000)
+
+    // Both questions and both answers are still on screen.
+    expect(screen.getByText('what is dhcp')).toBeTruthy()
+    expect(screen.getByText('DHCP hands out addresses.')).toBeTruthy()
+    expect(screen.getByText('what is dns')).toBeTruthy()
+    expect(screen.getByText('DNS resolves names.')).toBeTruthy()
   })
 
   it('stops for good when the user clicks the mic', async () => {

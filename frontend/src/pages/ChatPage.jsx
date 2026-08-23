@@ -24,6 +24,8 @@ export default function ChatPage() {
   const [statusText, setStatusText] = useState('Ready')
   const [wsStatus, setWsStatus] = useState('Connecting...')
   const [textInput, setTextInput] = useState('')
+  // Words recognised so far in the current utterance, shown live while you talk.
+  const [interimText, setInterimText] = useState('')
 
   // Theme. Remembered across visits, falling back to the OS preference.
   const [theme, setTheme] = useState(() => {
@@ -90,7 +92,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, statusText])
+  }, [messages, statusText, interimText])
 
   const connectWebSocket = () => {
     if (closedRef.current) return
@@ -217,6 +219,7 @@ export default function ChatPage() {
 
   // Stop the recognizer but keep wantListenRef, so the loop resumes later.
   const pauseListening = () => {
+    setInterimText('');
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
       restartTimerRef.current = null;
@@ -307,8 +310,10 @@ export default function ChatPage() {
   const handleSend = (text) => {
     if (!text.trim()) return;
 
-    // Clear history on new query
-    setMessages([{ role: 'user', content: text }]);
+    // Append. This used to replace the whole array, so every question wiped the
+    // transcript and only ever one exchange was visible.
+    setInterimText('');
+    setMessages(prev => [...prev, { role: 'user', content: text }]);
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       finishProcessing();
@@ -421,17 +426,25 @@ export default function ChatPage() {
       // submitted. Without this guard the same turn is sent twice.
       if (processingRef.current) return;
 
-      // With interimResults on, this fires continuously. Only act on a final
-      // transcript, otherwise we would submit half a sentence.
+      // With interimResults on, this fires continuously. Show the partial words
+      // as they are recognised, but only submit on a final transcript.
       let transcript = '';
+      let pending = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           transcript += event.results[i][0].transcript;
+        } else {
+          pending += event.results[i][0].transcript;
         }
       }
-      if (!transcript.trim()) return;
+
+      if (!transcript.trim()) {
+        setInterimText(pending);
+        return;
+      }
 
       // Got the question - close the mic so it does not keep capturing.
+      setInterimText('');
       pauseListening();
 
       stopAudio();
@@ -567,6 +580,22 @@ export default function ChatPage() {
             )
           ))}
           
+          {interimText.trim() && (
+            <div className="msg-row user-row">
+              <div className="msg-avatar">
+                <span style={{color: 'white', fontSize: '12px', fontWeight: 'bold'}}>H</span>
+              </div>
+              <div className="msg-body">
+                <div className="msg-meta">
+                  <strong>You</strong>
+                </div>
+                <div className="msg-bubble" style={{opacity: 0.65, fontStyle: 'italic'}}>
+                  {interimText}
+                </div>
+              </div>
+            </div>
+          )}
+
           {statusText !== 'Ready' && statusText !== 'Listening...' && (
             <div className="msg-row">
               <div className="msg-avatar">
