@@ -1,7 +1,7 @@
 /* ===== LANDING PAGE ===== */
 .landing {
   min-height: 100vh;
-  background: #fff;
+  background: var(--surface);
   display: flex;
   flex-direction: column;
 }
@@ -13,7 +13,7 @@
   justify-content: space-between;
   padding: 18px 48px;
   border-bottom: 1px solid var(--border-light);
-  background: rgba(255,255,255,0.95);
+  background: var(--surface-translucent);
   backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
@@ -87,7 +87,7 @@
   padding: 8px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: white;
+  background: var(--surface);
   color: var(--text);
   font-size: 0.85rem;
   font-weight: 500;
@@ -328,7 +328,7 @@
 .chat-sidebar {
   width: 240px;
   flex-shrink: 0;
-  background: white;
+  background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -353,7 +353,7 @@
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: white;
+  background: var(--surface);
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--text);
@@ -467,7 +467,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
-  background: white;
+  background: var(--surface-translucent);
   border-bottom: 1px solid var(--border);
 }
 
@@ -504,7 +504,7 @@
   height: 32px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: white;
+  background: var(--surface);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -573,7 +573,7 @@
   font-size: 0.9rem;
   line-height: 1.6;
   color: var(--text);
-  background: white;
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 
@@ -610,7 +610,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px;
-  background: white;
+  background: var(--surface);
   border-radius: 8px;
   border: 1px solid var(--border);
 }
@@ -657,7 +657,7 @@
   padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: white;
+  background: var(--surface);
   color: var(--text-muted);
   font-size: 0.8rem;
   display: flex;
@@ -681,7 +681,7 @@
 
 /* Chat Input Area */
 .chat-input-area {
-  background: white;
+  background: var(--surface);
   border-top: 1px solid var(--border);
   padding: 16px 24px;
 }
@@ -858,4 +858,10 @@
 @keyframes dotBounce {
   0%, 100% { transform: translateY(0); opacity: 0.4; }
   50% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* The hero wave SVG has its fill baked in, so it needs a dark counterpart. */
+:root[data-theme="dark"] .landing-hero::before {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 200'%3E%3Cpath fill='%230B1220' fill-opacity='1' d='M0,160L48,144C96,128,192,96,288,96C384,96,480,128,576,133.3C672,139,768,117,864,112C960,107,1056,117,1152,122.7C1248,128,1344,128,1392,128L1440,128L1440,200L1392,200L1344,200L1248,200L1152,200L1056,200L960,200L864,200L768,200L672,200L576,200L480,200L384,200L288,200L192,200L96,200L48,200L0,200Z'%3E%3C/path%3E%3C/svg%3E") no-repeat bottom;
+  background-size: cover;
 }

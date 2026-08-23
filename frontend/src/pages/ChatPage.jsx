@@ -24,6 +24,30 @@ export default function ChatPage() {
   const [statusText, setStatusText] = useState('Ready')
   const [wsStatus, setWsStatus] = useState('Connecting...')
   const [textInput, setTextInput] = useState('')
+
+  // Theme. Remembered across visits, falling back to the OS preference.
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('netwise-theme')
+      if (saved === 'dark' || saved === 'light') return saved
+    } catch (e) {
+      // Private mode / blocked storage - fall through to the OS preference.
+      console.error('Could not read saved theme:', e)
+    }
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+
+  // The attribute lives on <html> so the whole app (not just this page) themes.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try {
+      localStorage.setItem('netwise-theme', theme)
+    } catch (e) {
+      console.error('Could not save theme:', e)
+    }
+  }, [theme])
+
+  const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))
   
   const recognitionRef = useRef(null)
   const wsRef = useRef(null)
@@ -37,6 +61,16 @@ export default function ChatPage() {
   // Mirrors statusText for callbacks registered once, which would otherwise
   // keep reading the value captured at registration time.
   const statusTextRef = useRef('Ready')
+
+  // --- Voice loop state ---
+  // Browser speech recognition stops on its own after one utterance or a few
+  // seconds of silence. These track whether we still *want* to be listening so
+  // the loop can resume, instead of going quiet until the next manual click.
+  const wantListenRef = useRef(false)   // user intent: stay in the listening loop
+  const isListeningRef = useRef(false)  // recognizer actually running
+  const isSpeakingRef = useRef(false)   // assistant audio playing
+  const processingRef = useRef(false)   // query sent, answer not finished
+  const restartTimerRef = useRef(null)
 
   useEffect(() => {
     statusTextRef.current = statusText
@@ -81,11 +115,17 @@ export default function ChatPage() {
       } else if (data.type === 'response_generated') {
         setStatusText('Ready')
         setMessages(prev => [...prev, { role: 'ai', content: data.response }])
+        // Answer complete. If audio is still playing, the mic resumes when the
+        // queue drains instead.
+        processingRef.current = false
+        maybeRestartListening()
       } else if (data.type === 'audio') {
         queueAudio(data.data, data.is_filler)
       } else if (data.type === 'error') {
         setStatusText('Ready')
         setMessages(prev => [...prev, { role: 'system', content: `Backend error: ${data.message}` }])
+        processingRef.current = false
+        maybeRestartListening()
       }
     }
 
@@ -107,6 +147,9 @@ export default function ChatPage() {
     if (audioQueueRef.current.length === 0) {
       isPlayingRef.current = false;
       currentAudioRef.current = null;
+      // The assistant has stopped talking - hand the mic back.
+      isSpeakingRef.current = false;
+      maybeRestartListening();
       return;
     }
 
@@ -133,6 +176,7 @@ export default function ChatPage() {
   const stopAudio = () => {
     audioQueueRef.current = [];
     isPlayingRef.current = false;
+    isSpeakingRef.current = false;
     const audio = currentAudioRef.current;
     currentAudioRef.current = null;
     if (audio) {
@@ -147,25 +191,84 @@ export default function ChatPage() {
 
   const queueAudio = (base64Audio, isFiller) => {
     if (isFiller && isPlayingRef.current) return;
+
+    // Mute the mic while the assistant speaks, otherwise the recognizer hears
+    // the answer coming out of the speakers and submits it as the next question.
+    isSpeakingRef.current = true;
+    if (isListeningRef.current) {
+      pauseListening();
+    }
+
     audioQueueRef.current.push(base64Audio);
     if (!isPlayingRef.current) {
       playNextInQueue();
     }
   };
 
-  // Built once on mount. This used to run in the render body, which made
-  // constructing the recognizer a side effect of rendering.
+  // --- Listening loop helpers ---
+
+  // Stop the recognizer but keep wantListenRef, so the loop resumes later.
+  const pauseListening = () => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+    isListeningRef.current = false;
+    setIsListening(false);
+    try {
+      recognitionRef.current?.stop();
+    } catch (e) {
+      console.error('Failed to stop recognition:', e);
+    }
+  };
+
+  const startListening = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    if (isListeningRef.current || isSpeakingRef.current || processingRef.current) return;
+
+    try {
+      recognition.start();
+    } catch (e) {
+      // InvalidStateError means it is already running - treat that as listening
+      // rather than leaving the button stuck in the wrong state.
+      console.error('Failed to start recognition:', e);
+      isListeningRef.current = true;
+      setIsListening(true);
+      return;
+    }
+
+    isListeningRef.current = true;
+    setIsListening(true);
+    setStatusText('Listening...');
+  };
+
+  // Called whenever something that blocked the mic finishes: recognition ended,
+  // audio finished playing, or an answer completed.
+  const maybeRestartListening = () => {
+    if (closedRef.current) return;
+    if (!wantListenRef.current) return;
+    if (isListeningRef.current || isSpeakingRef.current || processingRef.current) return;
+
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+    // Small gap so the recognizer has fully released the microphone.
+    restartTimerRef.current = setTimeout(startListening, 300);
+  };
 
   const handleSend = (text) => {
     if (!text.trim()) return;
-    
+
+    processingRef.current = true;
+
     // Clear history on new query
     setMessages([{ role: 'user', content: text }]);
-    
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ query: text }));
     } else {
+      processingRef.current = false;
       setStatusText('Not connected to server');
+      maybeRestartListening();
     }
   }
 
@@ -176,33 +279,21 @@ export default function ChatPage() {
   }
 
   const toggleListen = () => {
+    if (!recognitionRef.current) {
+      alert("Speech Recognition is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+
     if (isListening) {
-      try {
-        recognitionRef.current?.stop();
-      } catch (e) {
-        console.error('Failed to stop recognition:', e);
-      }
-      setIsListening(false);
+      // Explicit stop: leave the loop until the user asks for it again.
+      wantListenRef.current = false;
+      pauseListening();
       setStatusText('Ready');
     } else {
-      if (recognitionRef.current) {
-        stopAudio();
-
-        try {
-          recognitionRef.current.start();
-        } catch (e) {
-          // start() throws InvalidStateError if the recognizer is already
-          // running. Previously this propagated and left isListening stuck on.
-          console.error('Failed to start recognition:', e);
-          setIsListening(false);
-          setStatusText('Ready');
-          return;
-        }
-        setIsListening(true);
-        setStatusText('Listening...');
-      } else {
-        alert("Speech Recognition is not supported in this browser. Please use Chrome or Edge.");
-      }
+      wantListenRef.current = true;
+      processingRef.current = false;
+      stopAudio();
+      startListening();
     }
   }
 
@@ -213,7 +304,9 @@ export default function ChatPage() {
       // Without this the socket outlived the page: the reconnect timer kept
       // firing and every mount leaked another open connection.
       closedRef.current = true
+      wantListenRef.current = false
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current)
       if (wsRef.current) {
         wsRef.current.onclose = null
         wsRef.current.close()
@@ -224,6 +317,8 @@ export default function ChatPage() {
     }
   }, [])
 
+  // Recognizer is built once on mount. This used to run in the render body,
+  // which made constructing it a side effect of rendering.
   useEffect(() => {
     if (recognitionRef.current) return;
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) return;
@@ -233,8 +328,14 @@ export default function ChatPage() {
     recognition.continuous = false;
     recognition.interimResults = false;
 
+    recognition.onstart = () => {
+      isListeningRef.current = true;
+      setIsListening(true);
+    };
+
     recognition.onresult = (event) => {
       const transcript = event.results[0][0].transcript;
+      isListeningRef.current = false;
       setIsListening(false);
 
       stopAudio();
@@ -243,16 +344,39 @@ export default function ChatPage() {
     };
 
     recognition.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
+      isListeningRef.current = false;
       setIsListening(false);
+
+      // 'no-speech' and 'aborted' are routine: the browser gives up after a few
+      // seconds of silence. Treating them as fatal is what silently killed the
+      // mic and left the page looking dead. Let onend restart the loop instead.
+      if (event.error === 'no-speech' || event.error === 'aborted') return;
+
+      console.error("Speech recognition error:", event.error);
+
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        // Permission denied - stop retrying and say so, rather than looping.
+        wantListenRef.current = false;
+        setStatusText('Ready');
+        setMessages(prev => [...prev, {
+          role: 'system',
+          content: 'Microphone access is blocked. Allow it in your browser settings, then click the mic to try again.'
+        }]);
+        return;
+      }
+
       setStatusText('Ready');
     };
 
     recognition.onend = () => {
+      isListeningRef.current = false;
       setIsListening(false);
       if (statusTextRef.current === 'Listening...') {
         setStatusText('Ready');
       }
+      // Recognition always ends after one utterance (continuous = false).
+      // Restart if we are still meant to be listening.
+      maybeRestartListening();
     };
 
     recognitionRef.current = recognition;
@@ -260,15 +384,17 @@ export default function ChatPage() {
 
   // Auto-start microphone if mode is voice
   useEffect(() => {
-    if (mode === 'voice' && !isListening) {
-      // Small timeout to allow component to mount
-      const timer = setTimeout(() => {
-        if (!isListening && recognitionRef.current) {
-          toggleListen();
-        }
-      }, 500);
-      return () => clearTimeout(timer);
-    }
+    if (mode !== 'voice') return;
+
+    // Small timeout to allow component to mount.
+    // This used to call toggleListen(), which reads `isListening` from the
+    // render it was created in - so it could toggle the mic back *off*.
+    const timer = setTimeout(() => {
+      wantListenRef.current = true;
+      startListening();
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, [mode]);
 
   return (
@@ -284,18 +410,29 @@ export default function ChatPage() {
               <span className="rag-dot" style={{ background: wsStatus === 'Connected' ? '#22c55e' : '#ef4444' }}></span>
               {wsStatus === 'Connected' ? 'RAG Enabled' : 'Disconnected'}
             </div>
-            <button className="topbar-icon-btn">
-              <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="5" />
-                <line x1="12" y1="1" x2="12" y2="3" />
-                <line x1="12" y1="21" x2="12" y2="23" />
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                <line x1="1" y1="12" x2="3" y2="12" />
-                <line x1="21" y1="12" x2="23" y2="12" />
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-              </svg>
+            <button
+              className="topbar-icon-btn"
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? (
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+              )}
             </button>
           </div>
         </header>
