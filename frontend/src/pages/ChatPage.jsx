@@ -26,6 +26,10 @@ export default function ChatPage() {
   const [textInput, setTextInput] = useState('')
   // Words recognised so far in the current utterance, shown live while you talk.
   const [interimText, setInterimText] = useState('')
+  // Set when speech recognition is unusable in this browser (missing API, denied
+  // permission, or a blocked speech service - Brave disables it by default).
+  // Voice mode then falls back to the text box so the app stays usable.
+  const [speechBlocked, setSpeechBlocked] = useState(false)
 
   // Theme. Remembered across visits, falling back to the OS preference.
   const [theme, setTheme] = useState(() => {
@@ -76,6 +80,7 @@ export default function ChatPage() {
   const startWatchdogRef = useRef(null)   // catches a start() that never opens the mic
   const responseTimerRef = useRef(null)   // catches an answer that never arrives
   const restartAttemptsRef = useRef(0)    // backs off repeated restart failures
+  const speechFailuresRef = useRef(0)     // consecutive speech-service failures
 
   // Always go through this instead of setStatusText: it updates the ref in the
   // same tick. Previously the ref was synced in an effect, so a handler running
@@ -400,7 +405,12 @@ export default function ChatPage() {
   // which made constructing it a side effect of rendering.
   useEffect(() => {
     if (recognitionRef.current) return;
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) return;
+    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+      // No speech API at all (Firefox, Safari). Show the text box rather than
+      // leaving voice mode with no way to enter anything.
+      setSpeechBlocked(true);
+      return;
+    }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
@@ -438,6 +448,11 @@ export default function ChatPage() {
         }
       }
 
+      // Any recognised words prove the speech service is reachable.
+      if (transcript.trim() || pending.trim()) {
+        speechFailuresRef.current = 0;
+      }
+
       if (!transcript.trim()) {
         setInterimText(pending);
         return;
@@ -463,15 +478,33 @@ export default function ChatPage() {
 
       console.error("Speech recognition error:", event.error);
 
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      if (event.error === 'not-allowed') {
         // Permission denied - stop retrying and say so, rather than looping.
         wantListenRef.current = false;
         setStatus('Ready');
+        setSpeechBlocked(true);
         setMessages(prev => [...prev, {
           role: 'system',
-          content: 'Microphone access is blocked. Allow it in your browser settings, then click the mic to try again.'
+          content: 'Microphone access is blocked. Allow it in your browser settings and reload, or type your question below.'
         }]);
         return;
+      }
+
+      if (event.error === 'network' || event.error === 'service-not-allowed') {
+        // The recognizer opens fine but the speech service is unreachable.
+        // Brave blocks it by default, and some networks block it too. One retry
+        // in case it is a blip, then fall back to typing so the app stays usable.
+        speechFailuresRef.current += 1;
+        if (speechFailuresRef.current >= 2) {
+          wantListenRef.current = false;
+          setStatus('Ready');
+          setSpeechBlocked(true);
+          setMessages(prev => [...prev, {
+            role: 'system',
+            content: "This browser is blocking speech recognition, so the mic can't hear you. Brave blocks it by default - try Chrome or Edge for voice. You can type your question below instead."
+          }]);
+          return;
+        }
       }
 
       setStatus('Ready');
@@ -502,7 +535,7 @@ export default function ChatPage() {
 
   // Auto-start microphone if mode is voice
   useEffect(() => {
-    if (mode !== 'voice') return;
+    if (mode !== 'voice' || speechBlocked) return;
 
     // Small timeout to allow component to mount.
     // This used to call toggleListen(), which reads `isListening` from the
@@ -513,7 +546,7 @@ export default function ChatPage() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [mode]);
+  }, [mode, speechBlocked]);
 
   return (
     <div className="chat-app">
@@ -635,7 +668,7 @@ export default function ChatPage() {
               </svg>
             </button>
 
-            {mode === 'voice' ? (
+            {mode === 'voice' && !speechBlocked ? (
               <div className="waveform-area">
                 <div className={`waveform-bars ${isListening ? 'active' : ''}`}>
                   <span className="bar"/><span className="bar"/><span className="bar"/>

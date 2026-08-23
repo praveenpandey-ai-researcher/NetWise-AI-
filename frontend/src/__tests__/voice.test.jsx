@@ -228,6 +228,52 @@ describe('voice loop', () => {
     expect(screen.getByText('DNS resolves names.')).toBeTruthy()
   })
 
+  it('falls back to the text box when the browser has no speech API', async () => {
+    delete window.SpeechRecognition
+    delete window.webkitSpeechRecognition
+
+    renderChat(); await flush(700)
+
+    const input = document.querySelector('.text-input')
+    expect(input).toBeTruthy()
+    expect(document.querySelector('.waveform-area')).toBeNull()
+  })
+
+  it('falls back to typing when the speech service is blocked (Brave)', async () => {
+    renderChat(); await flush(700)
+
+    // First network error is treated as a blip and retried.
+    await act(async () => { recognizer.endWith('network') })
+    await flush(2000)
+    await act(async () => { recognizer.endWith('network') })
+    await flush(2000)
+
+    expect(screen.getByText(/blocking speech recognition/i)).toBeTruthy()
+    expect(document.querySelector('.text-input')).toBeTruthy()
+  })
+
+  it('can still ask a question by typing in the fallback box', async () => {
+    delete window.SpeechRecognition
+    delete window.webkitSpeechRecognition
+
+    renderChat(); await flush(700)
+
+    const input = document.querySelector('.text-input')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'what is a vlan')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      document.querySelector('.text-input-row').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    await flush(50)
+
+    expect(socket.sent.at(-1)).toEqual({ query: 'what is a vlan' })
+    expect(screen.getByText('what is a vlan')).toBeTruthy()
+  })
+
   it('stops for good when the user clicks the mic', async () => {
     renderChat(); await flush(700)
     await act(async () => { document.querySelector('.voice-mic-btn').click() })
