@@ -1,17 +1,31 @@
-# Voice AI Assistant - Python Implementation
+# NetWise AI - Backend requirements (runtime)
 # Zero-latency voice knowledge base with parallelized RAG pipeline using LangChain
+#
+# This file is the LIGHT runtime set: it runs the BM25 retrieval mode and fits
+# comfortably in a 512 MB Render instance.
+# For dense/hybrid retrieval (FAISS + sentence-transformers) additionally install
+# requirements-hybrid.txt and set RETRIEVAL_MODE=hybrid (needs >= 1 GB RAM).
 
+# LLM
 groq>=0.5.0
 langchain>=0.1.0
 langchain-groq>=0.1.0
 langchain-community>=0.0.20
 langchain-core>=0.1.0
-faiss-cpu>=1.7.4
+langchain-classic>=1.0.0
+langchain-text-splitters>=0.0.1
+
+# Retrieval
 rank-bm25>=0.2.2
-sentence-transformers>=2.2.0
+
+# Document parsing (REQUIRED - without this every PDF in data/ is silently skipped)
+pypdf>=4.0.0
+
+# TTS
 elevenlabs>=1.0.0
+
+# Core
 python-dotenv>=1.0.0
-asyncio-throttle>=1.0.2
 aiohttp>=3.9.0
 numpy>=1.24.0
 pydantic>=2.0.0
@@ -19,5 +33,5 @@ rich>=13.0.0
 
 # Server and API
 fastapi>=0.100.0
-uvicorn>=0.22.0
+uvicorn[standard]>=0.22.0
 websockets>=11.0.3

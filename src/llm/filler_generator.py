@@ -51,7 +51,8 @@ Do NOT answer the question - just acknowledge you're looking it up.
 Examples:
 - "Let me check that for you..."
 - "I'll look that up right now..."
-- "One moment while I find that..."""
+- "One moment while I find that..."
+"""
     
     try:
         response = await generate_completion(

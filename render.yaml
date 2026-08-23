@@ -1,0 +1,53 @@
+# Render Blueprint for the NetWise AI backend.
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> pick this repo.
+# GROQ_API_KEY and ELEVENLABS_API_KEY are marked sync:false, so Render prompts
+# for them instead of storing secrets in the repo.
+
+services:
+  - type: web
+    name: netwise-ai
+    runtime: python
+    plan: free
+    region: oregon
+
+    # The PDFs are parsed once here, at build time, and cached as
+    # data/index/chunks.json. Doing it at boot instead took ~2 minutes and
+    # ~600 MB, which both delayed the port bind and exceeded the instance's RAM.
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      python -m scripts.build_index
+
+    startCommand: uvicorn src.api:app --host 0.0.0.0 --port $PORT
+
+    # Answers immediately, even while the index is still warming up.
+    healthCheckPath: /health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+
+      # bm25  -> ~110 MB RSS, boots in under a second. Required on the 512 MB
+      #          free and starter plans.
+      # hybrid -> FAISS + sentence-transformers, ~600 MB RSS. Needs a plan with
+      #          at least 1 GB RAM and requirements-hybrid.txt added to the
+      #          build command (with `python -m scripts.build_index --faiss`).
+      - key: RETRIEVAL_MODE
+        value: bm25
+
+      # Comma-separated list of frontend origins, or "*" to allow any.
+      - key: ALLOWED_ORIGINS
+        value: "*"
+
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: ELEVENLABS_MODEL
+        value: eleven_flash_v2_5
+      - key: ELEVENLABS_VOICE_ID
+        value: JBFqnCBsd6RMkjVDRZzb

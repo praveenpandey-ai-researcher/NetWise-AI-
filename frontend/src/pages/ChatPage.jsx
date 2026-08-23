@@ -2,6 +2,16 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Logo from '../components/Logo'
 
+// Backend WebSocket endpoint.
+// Set VITE_WS_URL in .env / the host's build env to point at a different backend.
+// Without an override we fall back to a local backend when served from localhost,
+// so `npm run dev` works without editing this file.
+const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  (['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? 'ws://localhost:8000/ws/chat'
+    : 'wss://netwise-ai.onrender.com/ws/chat')
+
 export default function ChatPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -21,6 +31,16 @@ export default function ChatPage() {
   const isPlayingRef = useRef(false)
   const reconnectTimerRef = useRef(null)
   const messagesEndRef = useRef(null)
+  const currentAudioRef = useRef(null)
+  // Set once the component unmounts, so in-flight callbacks stop reconnecting.
+  const closedRef = useRef(false)
+  // Mirrors statusText for callbacks registered once, which would otherwise
+  // keep reading the value captured at registration time.
+  const statusTextRef = useRef('Ready')
+
+  useEffect(() => {
+    statusTextRef.current = statusText
+  }, [statusText])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -31,10 +51,10 @@ export default function ChatPage() {
   }, [messages, statusText])
 
   const connectWebSocket = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
+    if (closedRef.current) return
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) return
 
-    const wsUrl = 'wss://netwise-ai.onrender.com/ws/chat';
-    const ws = new WebSocket(wsUrl)
+    const ws = new WebSocket(WS_URL)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -47,7 +67,13 @@ export default function ChatPage() {
     }
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
+      let data
+      try {
+        data = JSON.parse(event.data)
+      } catch (e) {
+        console.error('Bad message from server:', e)
+        return
+      }
       if (data.type === 'query_received') {
         setStatusText('Searching knowledge base...')
       } else if (data.type === 'generating_response') {
@@ -69,37 +95,54 @@ export default function ChatPage() {
     }
 
     ws.onclose = () => {
+      if (closedRef.current) return
       console.log('WebSocket closed, reconnecting in 2s...')
       setWsStatus('Reconnecting...')
       reconnectTimerRef.current = setTimeout(connectWebSocket, 2000)
     }
   }
 
-  useEffect(() => {
-    connectWebSocket()
-    return () => {
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-    }
-  }, [])
 
   const playNextInQueue = () => {
     if (audioQueueRef.current.length === 0) {
       isPlayingRef.current = false;
+      currentAudioRef.current = null;
       return;
     }
-    
+
     isPlayingRef.current = true;
     const base64Audio = audioQueueRef.current.shift();
-    
+
     const audio = new Audio("data:audio/mp3;base64," + base64Audio);
+    currentAudioRef.current = audio;
     audio.onended = () => {
+      // A clip that finished after stopAudio() must not restart the queue.
+      if (currentAudioRef.current !== audio) return;
       playNextInQueue();
     };
-    
+
     audio.play().catch(e => {
       console.error("Audio playback failed:", e);
+      if (currentAudioRef.current !== audio) return;
       playNextInQueue();
     });
+  };
+
+  // Clearing the queue alone left the clip that was already playing talking over
+  // the next question, so stop the active element too.
+  const stopAudio = () => {
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    const audio = currentAudioRef.current;
+    currentAudioRef.current = null;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.src = '';
+      } catch (e) {
+        console.error('Failed to stop audio:', e);
+      }
+    }
   };
 
   const queueAudio = (base64Audio, isFiller) => {
@@ -110,35 +153,8 @@ export default function ChatPage() {
     }
   };
 
-  if (!recognitionRef.current && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.continuous = false;
-    recognitionRef.current.interimResults = false;
-
-    recognitionRef.current.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      setIsListening(false);
-      
-      audioQueueRef.current = [];
-      isPlayingRef.current = false;
-      
-      handleSend(transcript);
-    };
-
-    recognitionRef.current.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
-      setIsListening(false);
-      setStatusText('Ready');
-    };
-
-    recognitionRef.current.onend = () => {
-      setIsListening(false);
-      if (statusText === 'Listening...') {
-        setStatusText('Ready');
-      }
-    };
-  }
+  // Built once on mount. This used to run in the render body, which made
+  // constructing the recognizer a side effect of rendering.
 
   const handleSend = (text) => {
     if (!text.trim()) return;
@@ -161,15 +177,27 @@ export default function ChatPage() {
 
   const toggleListen = () => {
     if (isListening) {
-      recognitionRef.current?.stop();
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {
+        console.error('Failed to stop recognition:', e);
+      }
       setIsListening(false);
       setStatusText('Ready');
     } else {
       if (recognitionRef.current) {
-        audioQueueRef.current = [];
-        isPlayingRef.current = false;
-        
-        recognitionRef.current.start();
+        stopAudio();
+
+        try {
+          recognitionRef.current.start();
+        } catch (e) {
+          // start() throws InvalidStateError if the recognizer is already
+          // running. Previously this propagated and left isListening stuck on.
+          console.error('Failed to start recognition:', e);
+          setIsListening(false);
+          setStatusText('Ready');
+          return;
+        }
         setIsListening(true);
         setStatusText('Listening...');
       } else {
@@ -177,6 +205,58 @@ export default function ChatPage() {
       }
     }
   }
+
+  useEffect(() => {
+    closedRef.current = false
+    connectWebSocket()
+    return () => {
+      // Without this the socket outlived the page: the reconnect timer kept
+      // firing and every mount leaked another open connection.
+      closedRef.current = true
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      stopAudio()
+      try { recognitionRef.current?.abort() } catch { /* not started */ }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (recognitionRef.current) return;
+    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) return;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setIsListening(false);
+
+      stopAudio();
+
+      handleSend(transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      setIsListening(false);
+      setStatusText('Ready');
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      if (statusTextRef.current === 'Listening...') {
+        setStatusText('Ready');
+      }
+    };
+
+    recognitionRef.current = recognition;
+  }, []);
 
   // Auto-start microphone if mode is voice
   useEffect(() => {

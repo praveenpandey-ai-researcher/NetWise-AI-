@@ -19,13 +19,61 @@ def get_llm(
     streaming: bool = False
 ) -> ChatGroq:
     """Get a configured Groq LLM instance"""
+    # `x if x is not None else default` rather than `x or default`: temperature=0
+    # is a legitimate value that `or` would silently replace with the default.
     return ChatGroq(
         api_key=config.groq.api_key,
         model=config.groq.model,
-        temperature=temperature or config.groq.temperature,
-        max_tokens=max_tokens or config.groq.max_tokens,
+        temperature=temperature if temperature is not None else config.groq.temperature,
+        max_tokens=max_tokens if max_tokens is not None else config.groq.max_tokens,
         streaming=streaming,
     )
+
+
+def to_lc_messages(messages: List[dict]) -> list:
+    """Convert role/content dicts into LangChain message objects"""
+    lc_messages = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        if role == "system":
+            lc_messages.append(SystemMessage(content=content))
+        elif role == "assistant":
+            lc_messages.append(AIMessage(content=content))
+        else:
+            lc_messages.append(HumanMessage(content=content))
+
+    return lc_messages
+
+
+def message_text(message) -> str:
+    """
+    Extract plain text from a LangChain message or chunk.
+
+    langchain-core 1.x may deliver `.content` as a list of typed content blocks
+    instead of a string. Concatenating that list onto a str raises TypeError, so
+    always normalise through here.
+    """
+    content = getattr(message, "content", message)
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+
+    # Fall back to the convenience accessor exposed by newer langchain-core
+    text = getattr(message, "text", None)
+    if callable(text):
+        text = text()
+    return text or ""
 
 
 async def generate_completion(
@@ -52,19 +100,8 @@ async def generate_completion(
         from src.tools.diagnostics import get_all_tools
         llm = llm.bind_tools(get_all_tools())
     
-    # Convert to LangChain message format
-    lc_messages = []
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        
-        if role == "system":
-            lc_messages.append(SystemMessage(content=content))
-        elif role == "assistant":
-            lc_messages.append(AIMessage(content=content))
-        else:
-            lc_messages.append(HumanMessage(content=content))
-    
+    lc_messages = to_lc_messages(messages)
+
     response = await llm.ainvoke(lc_messages)
     
     if use_tools and hasattr(response, "tool_calls") and response.tool_calls:
@@ -80,8 +117,8 @@ async def generate_completion(
                 
         # Re-invoke LLM with tool results
         response = await llm.ainvoke(lc_messages)
-        
-    return response.content
+
+    return message_text(response)
 
 
 async def stream_completion(
@@ -96,20 +133,10 @@ async def stream_completion(
         Text chunks as they are generated
     """
     llm = get_llm(temperature=temperature, max_tokens=max_tokens, streaming=True)
-    
-    # Convert to LangChain message format
-    lc_messages = []
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        
-        if role == "system":
-            lc_messages.append(SystemMessage(content=content))
-        elif role == "assistant":
-            lc_messages.append(AIMessage(content=content))
-        else:
-            lc_messages.append(HumanMessage(content=content))
-    
+
+    lc_messages = to_lc_messages(messages)
+
     async for chunk in llm.astream(lc_messages):
-        if chunk.content:
-            yield chunk.content
+        text = message_text(chunk)
+        if text:
+            yield text

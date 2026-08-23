@@ -1,0 +1,15 @@
+# NetWise AI - Optional dense-retrieval extras (RETRIEVAL_MODE=hybrid)
+#
+# Installs a CPU-only torch build. Without the extra index URL pip pulls the
+# CUDA wheels (~2.5 GB) and the Render build runs out of disk.
+#
+#   pip install -r requirements.txt -r requirements-hybrid.txt
+#
+# Runtime footprint with these installed is ~600 MB, so the service needs a
+# Render plan with at least 1 GB RAM (Standard). The free/starter 512 MB plans
+# will OOM - keep RETRIEVAL_MODE=bm25 there.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.0

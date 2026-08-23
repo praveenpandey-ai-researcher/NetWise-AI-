@@ -34,10 +34,19 @@ class RAGConfig(BaseModel):
     """RAG pipeline configuration"""
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "512"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "50"))
-    top_k: int = int(os.getenv("TOP_K", "5"))  # Reduced from 10 → less context = faster LLM
+    top_k: int = int(os.getenv("TOP_K", "5"))  # Reduced from 10 -> less context = faster LLM
     rerank_top_k: int = int(os.getenv("RERANK_TOP_K", "3"))
     prefetch_debounce_ms: int = 150
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+    # "bm25"   -> lexical only. ~90 MB RSS, no torch. Default: fits Render 512 MB.
+    # "hybrid" -> FAISS + BM25 ensemble. ~600 MB RSS, needs requirements-hybrid.txt
+    #             and a plan with >= 1 GB RAM.
+    retrieval_mode: str = os.getenv("RETRIEVAL_MODE", "bm25").strip().lower()
+
+    # Enable the LLM-based reranker. It costs an extra Groq round trip per query;
+    # the heuristic reranker is used when this is off or when the call fails.
+    use_llm_rerank: bool = os.getenv("USE_LLM_RERANK", "false").lower() in ("1", "true", "yes")
 
 
 class VoiceConfig(BaseModel):
@@ -57,6 +66,21 @@ class ConversationConfig(BaseModel):
     max_history_turns: int = 5
 
 
+def _parse_origins(raw: str) -> list[str]:
+    """Parse a comma-separated CORS origin list"""
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins or ["*"]
+
+
+class ServerConfig(BaseModel):
+    """HTTP server configuration"""
+    # Render (and most PaaS) inject the port to listen on via $PORT.
+    host: str = os.getenv("HOST", "0.0.0.0")
+    port: int = int(os.getenv("PORT", "8000"))
+    # Comma-separated list, e.g. "https://netwise.vercel.app,http://localhost:5173"
+    allowed_origins: list[str] = _parse_origins(os.getenv("ALLOWED_ORIGINS", "*"))
+
+
 class Config(BaseModel):
     """Main configuration container"""
     groq: GroqConfig = GroqConfig()
@@ -65,25 +89,43 @@ class Config(BaseModel):
     voice: VoiceConfig = VoiceConfig()
     latency: LatencyConfig = LatencyConfig()
     conversation: ConversationConfig = ConversationConfig()
-    
+    server: ServerConfig = ServerConfig()
+
     # Paths
     data_dir: Path = Path(__file__).parent.parent / "data"
+    # Pre-built chunk cache. Parsing the PDFs takes ~20 s and peaks near 400 MB,
+    # which is far too slow/heavy to do on every cold start. scripts/build_index.py
+    # writes this file at build time and startup just loads it.
+    index_dir: Path = Path(os.getenv("INDEX_DIR", str(Path(__file__).parent.parent / "data" / "index")))
+
+    @property
+    def chunk_cache_path(self) -> Path:
+        return self.index_dir / "chunks.json"
+
+    @property
+    def faiss_dir(self) -> Path:
+        return self.index_dir / "faiss"
 
 
 # Global config instance
 config = Config()
 
 
-def validate_config() -> list[str]:
+def validate_config(require_tts: bool = True) -> list[str]:
     """Validate required configuration and return list of errors"""
     errors = []
-    
+
     if not config.groq.api_key:
         errors.append("GROQ_API_KEY is required. Get one at https://console.groq.com")
-    
-    if not config.elevenlabs.api_key:
+
+    if require_tts and not config.elevenlabs.api_key:
         errors.append("ELEVENLABS_API_KEY is required. Get one at https://elevenlabs.io")
-    
+
+    if config.rag.retrieval_mode not in ("bm25", "hybrid"):
+        errors.append(
+            f"RETRIEVAL_MODE must be 'bm25' or 'hybrid', got {config.rag.retrieval_mode!r}"
+        )
+
     return errors
 
 

@@ -30,3 +30,6 @@ check_keys.py
 # OS files
 .DS_Store
 Thumbs.db
+
+# Generated index / chunk cache (rebuilt by scripts/build_index.py)
+data/index/

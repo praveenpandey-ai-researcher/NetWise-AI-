@@ -29,13 +29,18 @@ async def cross_encoder_rerank(
     """
     if not documents:
         return [], 0
-    
+
     top_k = top_k or config.rag.rerank_top_k
     start_time = time.time()
-    
+
     # If we have fewer documents than needed, just return them
     if len(documents) <= top_k:
         return documents, (time.time() - start_time) * 1000
+
+    # The LLM reranker costs an extra Groq round trip on every query, which is
+    # significant for a voice pipeline. Off by default; USE_LLM_RERANK=true opts in.
+    if not config.rag.use_llm_rerank:
+        return heuristic_rerank(query, documents, top_k), (time.time() - start_time) * 1000
     
     # Initialize LLM if not provided
     if llm is None:
@@ -108,6 +113,7 @@ Return only the JSON array of relevance scores:""")
         return reranked, (time.time() - start_time) * 1000
         
     except Exception as e:
+        print(f"LLM rerank failed ({e}), using heuristic rerank")
         return heuristic_rerank(query, documents, top_k), (time.time() - start_time) * 1000
 
 
