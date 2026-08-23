@@ -71,10 +71,18 @@ export default function ChatPage() {
   const isSpeakingRef = useRef(false)   // assistant audio playing
   const processingRef = useRef(false)   // query sent, answer not finished
   const restartTimerRef = useRef(null)
+  const startWatchdogRef = useRef(null)   // catches a start() that never opens the mic
+  const responseTimerRef = useRef(null)   // catches an answer that never arrives
+  const restartAttemptsRef = useRef(0)    // backs off repeated restart failures
 
-  useEffect(() => {
-    statusTextRef.current = statusText
-  }, [statusText])
+  // Always go through this instead of setStatusText: it updates the ref in the
+  // same tick. Previously the ref was synced in an effect, so a handler running
+  // before the next render (recognition's onend fires immediately after a
+  // result) saw the old value and clobbered the new status.
+  const setStatus = (text) => {
+    statusTextRef.current = text
+    setStatusText(text)
+  }
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -109,22 +117,22 @@ export default function ChatPage() {
         return
       }
       if (data.type === 'query_received') {
-        setStatusText('Searching knowledge base...')
+        setStatus('Searching knowledge base...')
       } else if (data.type === 'generating_response') {
-        setStatusText('Generating answer...')
+        setStatus('Generating answer...')
       } else if (data.type === 'response_generated') {
-        setStatusText('Ready')
+        setStatus('Ready')
         setMessages(prev => [...prev, { role: 'ai', content: data.response }])
         // Answer complete. If audio is still playing, the mic resumes when the
         // queue drains instead.
-        processingRef.current = false
+        finishProcessing()
         maybeRestartListening()
       } else if (data.type === 'audio') {
         queueAudio(data.data, data.is_filler)
       } else if (data.type === 'error') {
-        setStatusText('Ready')
+        setStatus('Ready')
         setMessages(prev => [...prev, { role: 'system', content: `Backend error: ${data.message}` }])
-        processingRef.current = false
+        finishProcessing()
         maybeRestartListening()
       }
     }
@@ -230,17 +238,34 @@ export default function ChatPage() {
     try {
       recognition.start();
     } catch (e) {
-      // InvalidStateError means it is already running - treat that as listening
-      // rather than leaving the button stuck in the wrong state.
+      // Do NOT claim we are listening here. A previous version set
+      // isListeningRef = true on any failure, which permanently blocked every
+      // later restart (both guards below bail when it is true) while nothing
+      // was actually running - the mic went dead for good.
+      if (e && e.name === 'InvalidStateError') {
+        // Already running: let the recognizer's own onstart settle the state.
+        return;
+      }
       console.error('Failed to start recognition:', e);
-      isListeningRef.current = true;
-      setIsListening(true);
+      isListeningRef.current = false;
+      setIsListening(false);
+      setStatus('Ready');
       return;
     }
 
-    isListeningRef.current = true;
-    setIsListening(true);
-    setStatusText('Listening...');
+    // isListening is set by the recognizer's onstart handler, so the UI only
+    // shows "Listening..." when the microphone is genuinely open.
+    setStatus('Listening...');
+
+    // If onstart never arrives the start silently failed; recover instead of
+    // sitting on a stale "Listening..." forever.
+    if (startWatchdogRef.current) clearTimeout(startWatchdogRef.current);
+    startWatchdogRef.current = setTimeout(() => {
+      if (isListeningRef.current) return;
+      console.warn('Recognition did not start; retrying');
+      setStatus('Ready');
+      maybeRestartListening();
+    }, 1500);
   };
 
   // Called whenever something that blocked the mic finishes: recognition ended,
@@ -250,26 +275,67 @@ export default function ChatPage() {
     if (!wantListenRef.current) return;
     if (isListeningRef.current || isSpeakingRef.current || processingRef.current) return;
 
+    // Back off if restarts keep failing, so a broken recognizer cannot spin.
+    const attempt = restartAttemptsRef.current;
+    if (attempt > 8) {
+      console.warn('Giving up on automatic mic restart');
+      wantListenRef.current = false;
+      setStatus('Ready');
+      return;
+    }
+    restartAttemptsRef.current = attempt + 1;
+
     if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-    // Small gap so the recognizer has fully released the microphone.
-    restartTimerRef.current = setTimeout(startListening, 300);
+    // Gap so the recognizer fully releases the microphone before restarting.
+    restartTimerRef.current = setTimeout(startListening, 400 + attempt * 200);
+  };
+
+  // Clears the in-flight query state and lets the mic resume.
+  const finishProcessing = () => {
+    processingRef.current = false;
+    if (responseTimerRef.current) {
+      clearTimeout(responseTimerRef.current);
+      responseTimerRef.current = null;
+    }
   };
 
   const handleSend = (text) => {
     if (!text.trim()) return;
 
-    processingRef.current = true;
-
     // Clear history on new query
     setMessages([{ role: 'user', content: text }]);
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ query: text }));
-    } else {
-      processingRef.current = false;
-      setStatusText('Not connected to server');
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      finishProcessing();
+      setStatus('Not connected to server');
+      connectWebSocket();
       maybeRestartListening();
+      return;
     }
+
+    processingRef.current = true;
+
+    // Set a status straight away. Without this, recognition's onend reset the
+    // status to 'Ready' the moment you stopped speaking, so the bar read
+    // "Click mic to speak" with no spinner while the answer was still coming -
+    // and the mic stayed off because a query was in flight.
+    setStatus('Thinking...');
+
+    wsRef.current.send(JSON.stringify({ query: text }));
+
+    // Watchdog: never stay stuck if the answer never arrives (dropped socket,
+    // or the free-tier backend waking from sleep).
+    if (responseTimerRef.current) clearTimeout(responseTimerRef.current);
+    responseTimerRef.current = setTimeout(() => {
+      if (!processingRef.current) return;
+      finishProcessing();
+      setStatus('Ready');
+      setMessages(prev => [...prev, {
+        role: 'system',
+        content: "The server didn't respond in time. It may have been asleep - please ask again."
+      }]);
+      maybeRestartListening();
+    }, 90000);
   }
 
   const handleTextSubmit = (e) => {
@@ -288,10 +354,11 @@ export default function ChatPage() {
       // Explicit stop: leave the loop until the user asks for it again.
       wantListenRef.current = false;
       pauseListening();
-      setStatusText('Ready');
+      setStatus('Ready');
     } else {
       wantListenRef.current = true;
-      processingRef.current = false;
+      restartAttemptsRef.current = 0;
+      finishProcessing();
       stopAudio();
       startListening();
     }
@@ -307,6 +374,8 @@ export default function ChatPage() {
       wantListenRef.current = false
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       if (restartTimerRef.current) clearTimeout(restartTimerRef.current)
+      if (startWatchdogRef.current) clearTimeout(startWatchdogRef.current)
+      if (responseTimerRef.current) clearTimeout(responseTimerRef.current)
       if (wsRef.current) {
         wsRef.current.onclose = null
         wsRef.current.close()
@@ -325,22 +394,44 @@ export default function ChatPage() {
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    // continuous = false ended the session after a single utterance or a few
+    // seconds of quiet, which is what made the mic "suddenly stop". A continuous
+    // session survives natural pauses; we still submit on the first final result.
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
 
     recognition.onstart = () => {
       isListeningRef.current = true;
+      restartAttemptsRef.current = 0;
+      if (startWatchdogRef.current) {
+        clearTimeout(startWatchdogRef.current);
+        startWatchdogRef.current = null;
+      }
       setIsListening(true);
     };
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      isListeningRef.current = false;
-      setIsListening(false);
+      // stop() flushes a final result, so this can fire again just after we
+      // submitted. Without this guard the same turn is sent twice.
+      if (processingRef.current) return;
+
+      // With interimResults on, this fires continuously. Only act on a final
+      // transcript, otherwise we would submit half a sentence.
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript += event.results[i][0].transcript;
+        }
+      }
+      if (!transcript.trim()) return;
+
+      // Got the question - close the mic so it does not keep capturing.
+      pauseListening();
 
       stopAudio();
 
-      handleSend(transcript);
+      handleSend(transcript.trim());
     };
 
     recognition.onerror = (event) => {
@@ -357,7 +448,7 @@ export default function ChatPage() {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         // Permission denied - stop retrying and say so, rather than looping.
         wantListenRef.current = false;
-        setStatusText('Ready');
+        setStatus('Ready');
         setMessages(prev => [...prev, {
           role: 'system',
           content: 'Microphone access is blocked. Allow it in your browser settings, then click the mic to try again.'
@@ -365,14 +456,16 @@ export default function ChatPage() {
         return;
       }
 
-      setStatusText('Ready');
+      setStatus('Ready');
     };
 
     recognition.onend = () => {
       isListeningRef.current = false;
       setIsListening(false);
-      if (statusTextRef.current === 'Listening...') {
-        setStatusText('Ready');
+      // Only clear the listening label. If a query is in flight, handleSend has
+      // already set 'Thinking...' and must not be reset to 'Ready'.
+      if (!processingRef.current && statusTextRef.current === 'Listening...') {
+        setStatus('Ready');
       }
       // Recognition always ends after one utterance (continuous = false).
       // Restart if we are still meant to be listening.
