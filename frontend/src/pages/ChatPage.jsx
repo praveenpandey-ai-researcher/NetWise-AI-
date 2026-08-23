@@ -230,6 +230,23 @@ export default function ChatPage() {
     }
   };
 
+  // Queue another start attempt. Every failure path must go through here:
+  // returning without scheduling a retry leaves the microphone dead for good,
+  // because onstart never fires and onend has already been delivered.
+  const scheduleRestart = () => {
+    if (closedRef.current) return;
+    if (!wantListenRef.current) return;
+
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+
+    const attempt = restartAttemptsRef.current;
+    restartAttemptsRef.current = attempt + 1;
+    // Backs off, but never gives up while the user wants to be listening.
+    const delay = Math.min(400 + attempt * 300, 4000);
+
+    restartTimerRef.current = setTimeout(startListening, delay);
+  };
+
   const startListening = () => {
     const recognition = recognitionRef.current;
     if (!recognition) return;
@@ -238,18 +255,19 @@ export default function ChatPage() {
     try {
       recognition.start();
     } catch (e) {
-      // Do NOT claim we are listening here. A previous version set
-      // isListeningRef = true on any failure, which permanently blocked every
-      // later restart (both guards below bail when it is true) while nothing
-      // was actually running - the mic went dead for good.
-      if (e && e.name === 'InvalidStateError') {
-        // Already running: let the recognizer's own onstart settle the state.
-        return;
+      // Do NOT claim we are listening here. An earlier version set
+      // isListeningRef = true on failure, which permanently blocked every later
+      // restart while nothing was actually running.
+      //
+      // InvalidStateError is the common case: Chrome has not finished tearing
+      // down the previous session yet. It is transient, so retry - the previous
+      // version returned here and the mic never came back.
+      if (!e || e.name !== 'InvalidStateError') {
+        console.error('Failed to start recognition:', e);
       }
-      console.error('Failed to start recognition:', e);
       isListeningRef.current = false;
       setIsListening(false);
-      setStatus('Ready');
+      scheduleRestart();
       return;
     }
 
@@ -263,7 +281,6 @@ export default function ChatPage() {
     startWatchdogRef.current = setTimeout(() => {
       if (isListeningRef.current) return;
       console.warn('Recognition did not start; retrying');
-      setStatus('Ready');
       maybeRestartListening();
     }, 1500);
   };
@@ -275,19 +292,7 @@ export default function ChatPage() {
     if (!wantListenRef.current) return;
     if (isListeningRef.current || isSpeakingRef.current || processingRef.current) return;
 
-    // Back off if restarts keep failing, so a broken recognizer cannot spin.
-    const attempt = restartAttemptsRef.current;
-    if (attempt > 8) {
-      console.warn('Giving up on automatic mic restart');
-      wantListenRef.current = false;
-      setStatus('Ready');
-      return;
-    }
-    restartAttemptsRef.current = attempt + 1;
-
-    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-    // Gap so the recognizer fully releases the microphone before restarting.
-    restartTimerRef.current = setTimeout(startListening, 400 + attempt * 200);
+    scheduleRestart();
   };
 
   // Clears the in-flight query state and lets the mic resume.
@@ -462,9 +467,16 @@ export default function ChatPage() {
     recognition.onend = () => {
       isListeningRef.current = false;
       setIsListening(false);
-      // Only clear the listening label. If a query is in flight, handleSend has
-      // already set 'Thinking...' and must not be reset to 'Ready'.
-      if (!processingRef.current && statusTextRef.current === 'Listening...') {
+      // Only clear the listening label when the loop is genuinely finishing.
+      // If a query is in flight handleSend has already set 'Thinking...', and if
+      // we are about to restart we stay on 'Listening...' so the bar does not
+      // flash "Click mic to speak" between attempts.
+      const willRestart = wantListenRef.current
+        && !processingRef.current
+        && !isSpeakingRef.current
+        && !closedRef.current;
+
+      if (!willRestart && !processingRef.current && statusTextRef.current === 'Listening...') {
         setStatus('Ready');
       }
       // Recognition always ends after one utterance (continuous = false).
