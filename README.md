@@ -114,6 +114,44 @@ loading; `failed` puts the reason in `error`.
   reconnects on its own, so the first question after a sleep may need a retry.
 - Do not raise `RETRIEVAL_MODE` to `hybrid` on a 512 MB plan — it will OOM.
 
+## Deploying the frontend to Vercel
+
+The site lives in `frontend/`, **not** the repo root. The root `package.json`
+builds the Node/TypeScript backend (`tsc`), which produces JS modules and no
+`index.html` - pointing Vercel at the repo root cannot produce a website, which
+shows up as a `DEPLOYMENT_NOT_FOUND` 404.
+
+**Recommended:** Vercel Dashboard -> the project -> **Settings** -> **Build and
+Deployment** -> set **Root Directory** to `frontend`, then redeploy.
+
+Vercel then auto-detects Vite and picks up `frontend/vercel.json`:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `frontend` |
+| Framework | Vite |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+
+If you leave Root Directory at the repo root, the root `vercel.json` handles it
+instead - it installs and builds `frontend/` and serves `frontend/dist`.
+
+Both configs include an SPA rewrite. Without it, loading `/chat` directly (or
+refreshing on it) returns 404, because only `/` exists as a real file.
+
+### Pointing the frontend at a different backend
+
+By default the deployed site connects to `wss://netwise-ai.onrender.com/ws/chat`.
+To override, add an environment variable in Vercel (Settings -> Environment
+Variables) and redeploy:
+
+```
+VITE_WS_URL = wss://your-service.onrender.com/ws/chat
+```
+
+`VITE_`-prefixed variables are baked in at build time, so a redeploy is required
+after changing them.
+
 ## Endpoints
 
 | Endpoint | Purpose |
